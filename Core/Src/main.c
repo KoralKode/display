@@ -351,7 +351,7 @@ void int_mode_1(){
 			set_encoder(enc);
 			print_interface_mode0();
 		}else if(enc!=get_encoder()){
-			if(get_encoder()>5000){
+			if(get_encoder()>5000){//нету отрицательных значений, поэтому оно становится максимальным после 0
 				enc=9;
 				set_encoder(9);
 				number[choiced_channel][choiced_num-1]=0;
