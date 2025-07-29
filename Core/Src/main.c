@@ -323,12 +323,13 @@ void int_mode_1(){
 	HAL_Delay(10);
 	if(choice==0 && enc!=get_encoder()){
 		enc=get_encoder();
-		if(enc>6){
-			enc=0;
-			set_encoder(0);
-		}else if(enc<0){
+		if(enc>5000){
 			set_encoder(6);
 			enc=6;
+		}
+		else if(enc>6){
+			enc=0;
+			set_encoder(0);
 		}
 		choiced_num=enc;
 		print_interface_mode1();
@@ -350,16 +351,17 @@ void int_mode_1(){
 			set_encoder(enc);
 			print_interface_mode0();
 		}else if(enc!=get_encoder()){
-			if(get_encoder()>9){
-				enc=0;
-				set_encoder(0);
-				number[choiced_channel][choiced_num-1]=9;
-				increase_left();
-			}else if(get_encoder()<0){
+			if(get_encoder()>5000){
 				enc=9;
 				set_encoder(9);
 				number[choiced_channel][choiced_num-1]=0;
 				decrease_left();
+			}
+			else if(get_encoder()>9){
+				enc=0;
+				set_encoder(0);
+				number[choiced_channel][choiced_num-1]=9;
+				increase_left();
 			}else{
 				enc=get_encoder();
 				number[choiced_channel][choiced_num-1]=enc;
