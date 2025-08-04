@@ -23,7 +23,8 @@
 /* USER CODE BEGIN Includes */
 #include "ssd1306.h"
 #include "ssd1306_fonts.h"
-
+#include <math.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -51,14 +52,14 @@ I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
 
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
 
 /* USER CODE BEGIN PV */
 
-uint8_t enc;
-//uint32_t freq;
-uint32_t freq[3];
+int freq[3];
+int prev_encoder;
 char choice;
-uint8_t number[3][6];
+char num_string [3][7];
 uint8_t choiced_num;
 uint8_t choiced_channel;
 char interface_mode;
@@ -70,6 +71,7 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_I2C2_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 err_t si5351_set_frequency(uint8_t output, uint32_t frequency) {
     // Проверка допустимости выхода и частоты
@@ -132,8 +134,7 @@ err_t si5351_set_frequency(uint8_t output, uint32_t frequency) {
 }
 
 
-
-void uint32_to_str(uint32_t num, char *str) {
+void int_to_str(int num, char *str) {
     char tmp[12]; // Временный буфер
     int i = 0;
 
@@ -157,34 +158,24 @@ void uint32_to_str(uint32_t num, char *str) {
     }
     str[j] = '\0';
 }
-uint32_t array_to_uint32_t(uint8_t arr[]){
-	uint32_t ans=0;
-	for(int i=0;i<6;++i){
-		ans+=arr[i]*(pow(10,i));
-	}
-	return ans;
+
+int get_encoder(){
+	return (int)TIM1->CNT/4;//для энкодера использующегося в проекте
 }
 
-uint32_t get_encoder(){
-	return TIM1->CNT/4;//для энкодера использующегося в проекте
-}
-
-void set_encoder(uint32_t e){
+void set_encoder(int e){
 	TIM1->CNT=e*4;
 }
+
 
 void print_interface_mode0(){
 	ssd1306_SetCursor(1, 1);
 	ssd1306_Fill(Black);
-	char buff[12];
-	uint32_to_str(freq[0], buff);
-	ssd1306_WriteString(buff, Font_7x10, White);
+	ssd1306_WriteString(num_string[0], Font_7x10, White);
 	ssd1306_WriteString("   ", Font_7x10, White);
-	uint32_to_str(freq[1], buff);
-	ssd1306_WriteString(buff, Font_7x10, White);
+	ssd1306_WriteString(num_string[1], Font_7x10, White);
 	ssd1306_SetCursor(1, 10);//для переноса на следующую строку
-	uint32_to_str(freq[2], buff);
-	ssd1306_WriteString(buff, Font_7x10, White);
+	ssd1306_WriteString(num_string[2], Font_7x10, White);
 	ssd1306_WriteString("   ", Font_7x10, White);
 	if(choiced_channel==0){
 		ssd1306_WriteString("ch0", Font_7x10, White);
@@ -196,31 +187,36 @@ void print_interface_mode0(){
 	ssd1306_UpdateScreen();
 }
 
-
 void print_interface_mode1(){
-
-
 	ssd1306_SetCursor(1, 1);
 	ssd1306_Fill(Black);
-	//char buff[12];
 	if(choiced_num==0){
-		for(int i=5;i>=0;--i){
-			char t=48+number[choiced_channel][i];
-			char str[2] = {t, '\0'};
-			ssd1306_WriteString(str, Font_7x10, White);
+		uint16_t size=strlen(num_string[choiced_channel]);
+		for(int i=size;i<6;++i){
+			ssd1306_WriteString("0", Font_7x10, White);
 		}
-		freq[choiced_channel]=array_to_uint32_t(number[choiced_channel]);
+		ssd1306_WriteString(num_string[choiced_channel], Font_7x10, White);
+
+
 		ssd1306_WriteString("   ", Font_7x10, White);
 		ssd1306_WriteString("send", Font_11x18, White);
 	}else{
-		for(int i=5;i>=0;--i){
+		uint16_t size=strlen(num_string[choiced_channel]);
+		for(int i=5;i>size-1;--i){
 			if(i==choiced_num-1){
-				char t=48+number[choiced_channel][i];
-				char str[2] = {t, '\0'};
+				ssd1306_WriteString("0", Font_11x18, White);
+			}else{
+				ssd1306_WriteString("0", Font_7x10, White);
+			}
+		}
+		for(int i=0;i<size;++i){
+			if(i==size-choiced_num){
+
+				char str[2] = {num_string[choiced_channel][i], '\0'};
 				ssd1306_WriteString(str, Font_11x18, White);
 			}else{
-				char t=48+number[choiced_channel][i];
-				char str[2] = {t, '\0'};
+
+				char str[2] = {num_string[choiced_channel][i], '\0'};
 				ssd1306_WriteString(str, Font_7x10, White);
 			}
 		}
@@ -231,25 +227,14 @@ void print_interface_mode1(){
 }
 
 void int_mode_0(){
-	if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET) {  // Если кнопка нажата (подтяжка к VCC)
+	if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET) {  // Если кнопка нажата (подтяжка к VCC)
 		choice=1;
-
 	}
-	while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET);  // Ждём отпускания
-	HAL_Delay(10);
-	if(choice==0 && enc!=get_encoder()){
-		enc=get_encoder();
-		if(enc>2){
-			enc=0;
-			set_encoder(0);
-		}else if(enc<0){
-			enc=2;
-			set_encoder(2);
-		}
-		choiced_channel=enc;
+	while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET);  // Ждём отпускания
+	if(choice==0){
+		choiced_channel=get_encoder()%3;
 		print_interface_mode0();
 	}else if(choice==1){
-		enc=1;
 		set_encoder(1);
 		choiced_num=1;//потому что есть send который будем считать за 0 положение
 		interface_mode=1;
@@ -259,85 +244,48 @@ void int_mode_0(){
 
 }
 
-void increase_left(){
-	for(int i=choiced_num;i<7;++i){
-		if(number[choiced_channel][i-1]==9){
-			number[choiced_channel][i-1]=0;
-		}else{
-			number[choiced_channel][i-1]++;
-			break;
-		}
-	}
-}
 
-void decrease_left() {
-    int i = choiced_num;
-    while (i < 7) {
-        if (number[choiced_channel][i-1] == 0) {
-            number[choiced_channel][i-1] = 9;
-            i++; // Переходим к следующей цифре слева
-        } else {
-            number[choiced_channel][i-1] -= 1;
-            break;
-        }
-    }
-}
 
 void min_freq(){
-	number[choiced_channel][0]=8;
-	number[choiced_channel][1]=0;
-	number[choiced_channel][2]=0;
-	number[choiced_channel][3]=0;
-	number[choiced_channel][4]=0;
-	number[choiced_channel][5]=0;
-
+	num_string[choiced_channel][0]='8';
+	num_string[choiced_channel][1]='\0';
 }
 
 void max_freq(){
-	number[choiced_channel][0]=0;
-	number[choiced_channel][1]=0;
-	number[choiced_channel][2]=0;
-	number[choiced_channel][3]=0;
-	number[choiced_channel][4]=6;
-	number[choiced_channel][5]=1;
+	num_string[choiced_channel][0]='1';
+	num_string[choiced_channel][1]='6';
+	num_string[choiced_channel][2]='0';
+	num_string[choiced_channel][3]='0';
+	num_string[choiced_channel][4]='0';
+	num_string[choiced_channel][5]='0';
+	num_string[choiced_channel][6]='\0';
 
 }
 
 void int_mode_1(){
-	if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET) {  // Если кнопка нажата (подтяжка к VCC)
+	if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET) {  // Если кнопка нажата (подтяжка к VCC)
 		if(choice==0){
 
 			choice=1;
 			if(choiced_num!=0){
-				enc=number[choiced_channel][choiced_num-1];
-				set_encoder(enc);
+				prev_encoder=1000;
+				set_encoder(1000);
+
 			}
 		}else{
 			choice=0;
-			enc=choiced_num;
-			set_encoder(enc);
+			set_encoder(choiced_num);
 		}
 
 	}
-	while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET);  // Ждём отпускания
-	HAL_Delay(10);
-	if(choice==0 && enc!=get_encoder()){
-		enc=get_encoder();
-		if(enc>5000){
-			set_encoder(6);
-			enc=6;
-		}
-		else if(enc>6){
-			enc=0;
-			set_encoder(0);
-		}
-		choiced_num=enc;
+	while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET);  // Ждём отпускания
+	if(choice==0){
+		choiced_num=get_encoder()%7;
 		print_interface_mode1();
 	}else if(choice==1){
 		if(choiced_num==0){
 			choice=0;
 			interface_mode=0;
-			freq[choiced_channel]=array_to_uint32_t(number[choiced_channel]);
 			if(freq[choiced_channel]<8){
 				freq[choiced_channel]=8;
 				min_freq();
@@ -345,31 +293,40 @@ void int_mode_1(){
 				freq[choiced_channel]=160000;
 				max_freq();
 			}
+			/*
 			si5351_set_frequency(choiced_channel, freq[choiced_channel]*1000);
 			si5351_enableOutputs(0xFF);
-			enc=choiced_channel;
-			set_encoder(enc);
+			*/
+			set_encoder(choiced_channel);
 			print_interface_mode0();
-		}else if(enc!=get_encoder()){
-			if(get_encoder()>5000){//нету отрицательных значений, поэтому оно становится максимальным после 0
-				enc=9;
-				set_encoder(9);
-				number[choiced_channel][choiced_num-1]=0;
-				decrease_left();
+		}else{
+			int delta = get_encoder();
+
+			freq[choiced_channel]+=(delta-prev_encoder)*pow(10,choiced_num-1);
+			if(freq[choiced_channel]<0){
+				freq[choiced_channel]=1000000+freq[choiced_channel];
+			}else if(freq[choiced_channel]>999999){
+				freq[choiced_channel]=(7+(delta-prev_encoder)*pow(10,choiced_num-1));
 			}
-			else if(get_encoder()>9){
-				enc=0;
-				set_encoder(0);
-				number[choiced_channel][choiced_num-1]=9;
-				increase_left();
-			}else{
-				enc=get_encoder();
-				number[choiced_channel][choiced_num-1]=enc;
-			}
+
+			//set_encoder(1000);
+			prev_encoder=delta;
+			int_to_str(freq[choiced_channel],num_string[choiced_channel]);
 			print_interface_mode1();
 
 		}
 	}
+}
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM2)
+    {
+    	if(interface_mode==0){
+    		int_mode_0();
+    	}else{
+    		int_mode_1();
+    	}
+    }
 }
 /* USER CODE END PFP */
 
@@ -415,27 +372,34 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM1_Init();
   MX_I2C2_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
   ssd1306_Init();
-  si5351_Init();
-  enc=0;//значение энкодера с учётом дребзга
+  //si5351_Init();
   set_encoder(0);//выставление энкодера в 0
-  freq[0]=8;//начальная минимальная частота канала 0
-  freq[1]=8;//начальная минимальная частота канала 1
-  freq[2]=8;//начальная минимальная частота канала 2
-  choice=0;//переменная для считывания был ли нажат энкодер
-  number[0][0]=8;//массив значения частоты в кГц канала 0
-  number[1][0]=8;//массив значения частоты в кГц канала 1
-  number[2][0]=8;//массив значения частоты в кГц канала 2
-  choiced_num=0;//переменная для определения выбранной цифры в массиве частоты
-  choiced_channel=0;// номер выбранного канала
-  interface_mode=0;//переменная для определения что должно показыватиься на экране(0-значения частот, 1-редактирование частоты)
+      freq[0]=8;//начальная минимальная частота канала 0
+      freq[1]=8;//начальная минимальная частота канала 1
+      freq[2]=8;//начальная минимальная частота канала 2
+      choice=0;//переменная для считывания был ли нажат энкодер
+      choiced_channel=2;
+      min_freq();
+      choiced_channel=1;
+      min_freq();
+      choiced_num=0;//переменная для определения выбранной цифры в массиве частоты
+      choiced_channel=0;// номер выбранного канала
+      min_freq();
+      interface_mode=0;//переменная для определения что должно показыватиься на экране(0-значения частот, 1-редактирование частоты)
+      prev_encoder=8;
+      print_interface_mode0();
+  /*
   si5351_set_frequency(0, 8000);//устанвливаем частоту в минимальную
   si5351_set_frequency(1, 8000);//устанвливаем частоту в минимальную
   si5351_set_frequency(2, 8000);//устанвливаем частоту в минимальную
   si5351_enableOutputs(0xFF);//включаем все выходы
+  */
   print_interface_mode0();//выводим на экран начальный интерфейс
+  HAL_TIM_Base_Start_IT(&htim2);  // Запуск таймера с прерыванием
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -445,77 +409,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  if(interface_mode==0){
+	  //HAL_TIM_PeriodElapsedCallback(&htim2);
+	  /*if(interface_mode==0){
 		  int_mode_0();
 	  }else{
 		  int_mode_1();
-	  }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	  /*if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET) {  // Если кнопка нажата (подтяжка к VCC)
-		  //choice=1;
-		  if(choice==0){
-			  choice=1;
-			  enc=number[choiced];
-			  TIM1->CNT=enc/4;
-		  }else{
-			  choice=0;
-			  si5351_set_frequency(2, freq);
-			  si5351_enableOutputs(2);
-			  enc=choiced;
-			  TIM1->CNT=enc/4;
-		  }
-	      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET);  // Ждём отпускания
-	  }
-	  HAL_Delay(10);
-	  if(choice==1){
-		  if(enc!=TIM1->CNT/4){
-			  enc=TIM1->CNT/4;
-			  if(enc>9){
-				  enc=0;
-			  }else if(enc<0){
-				  enc=9;
-			  }
-			  number[choiced]=enc;
-			  freq=array_to_uint32_t(number);
-			  ssd1306_SetCursor(1, 1);
-			  char dt[12];
-			  uint32_to_str(freq, dt);
-			  ssd1306_Fill(Black);
-			  ssd1306_WriteString(dt, Font_7x10, White);
-			  ssd1306_UpdateScreen();
-		  }
-	  }else{
-		  if(enc!=TIM1->CNT/4){
-			  enc=TIM1->CNT/4;
-			  if(enc>5){
-				  enc=0;
-			  }else if(enc<0){
-				  enc=5;
-			  }
-			  choiced=enc;
-		  }
 	  }*/
-
   }
   /* USER CODE END 3 */
 }
@@ -648,7 +547,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65535;
+  htim1.Init.Period = 7000;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -678,6 +577,55 @@ static void MX_TIM1_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 7199;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -690,9 +638,20 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA0 */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
